@@ -17,6 +17,7 @@
 #include "ESP8266Compression.h"
 #include "ESP8266Security.h"
 #include "ESP8266FOTA.h"
+#include "ESP8266PowerMonitor.h"
 #include <LittleFS.h>
 
 // Global objects
@@ -135,6 +136,14 @@ void setup()
     Serial.println("    BitBots EcoWatt ESP8266");
     Serial.println("==================================");
 
+    // Build identification - helps verify which binary is running after upload
+    Serial.print("[BUILD] Compiled: ");
+    Serial.print(__DATE__);
+    Serial.print(" ");
+    Serial.println(__TIME__);
+    Serial.print("[BUILD] ChipID: ");
+    Serial.println(ESP.getChipId());
+
     startTime = millis();
     systemInitialized = initializeSystem();
 
@@ -219,6 +228,8 @@ void loop()
         executeCommand();
     }
 
+    // Record idle/sleep time
+    powerMonitor.recordSleep(100);
     delay(100);
 }
 
@@ -377,6 +388,7 @@ void pollSensors()
     if (!systemInitialized)
         return;
 
+    powerMonitor.startOperation("poll");
     Serial.println("[POLL] Starting sensor polling...");
 
     Sample sample;
@@ -468,6 +480,8 @@ void pollSensors()
     {
         Serial.println("[BUFFER] Buffer full, sample discarded");
     }
+
+    powerMonitor.endOperation();
 }
 
 void uploadData()
@@ -486,6 +500,8 @@ void uploadData()
     }
     uploadInProgress = true;
 
+    powerMonitor.startOperation("upload");
+    unsigned long wifiStartMs = millis();
     Serial.println("[UPLOAD] Starting data upload...");
 
     // Non-destructive snapshot; clear only after ACK success
@@ -496,6 +512,8 @@ void uploadData()
 
     if (uploadToServer(samples))
     {
+        unsigned long wifiDuration = millis() - wifiStartMs;
+        powerMonitor.recordWiFiActivity(wifiDuration);
         Serial.println("[UPLOAD] Upload successful");
         dataBuffer.clear();
 
@@ -527,9 +545,12 @@ void uploadData()
     }
     else
     {
+        unsigned long wifiDuration = millis() - wifiStartMs;
+        powerMonitor.recordWiFiActivity(wifiDuration);
         Serial.println("[UPLOAD] Upload failed");
     }
 
+    powerMonitor.endOperation();
     uploadInProgress = false;
 }
 
@@ -549,6 +570,7 @@ void requestConfigUpdate()
     }
     configRequestInProgress = true;
 
+    powerMonitor.startOperation("config");
     Serial.println("[CONFIG] Requesting configuration update from cloud...");
 
     if (sendConfigRequest())
@@ -560,6 +582,7 @@ void requestConfigUpdate()
         Serial.println("[CONFIG] Configuration request failed");
     }
 
+    powerMonitor.endOperation();
     configRequestInProgress = false;
 }
 
@@ -576,7 +599,7 @@ bool sendConfigRequest()
     else if (strlen(apiConfig.upload_url) > 0)
         configUrl = apiConfig.upload_url;
     else
-        configUrl = "http://10.63.73.102:5000/config";
+        configUrl = "http://10.23.168.102:5000/config";
 
     httpClient.begin(wifiClient, configUrl);
     Serial.print("[HTTP] Config request to: ");
@@ -1081,7 +1104,7 @@ bool uploadToServer(const std::vector<Sample> &samples)
     WiFiClient wifiClient;
 
     // Use upload_url for cloud ingestion
-    const char *uploadUrl = apiConfig.upload_url[0] != '\0' ? apiConfig.upload_url : "http://10.63.73.102:5000/upload";
+    const char *uploadUrl = apiConfig.upload_url[0] != '\0' ? apiConfig.upload_url : "http://10.23.168.102:5000/upload";
     httpClient.begin(wifiClient, uploadUrl);
     Serial.print("[HTTP] POST to: ");
     Serial.println(uploadUrl);
@@ -1846,6 +1869,29 @@ void handleSerialCommands()
                 Serial.println("[CMD] Assembled firmware file exists");
             }
         }
+        else if (command == "power-on")
+        {
+            Serial.println("[CMD] Enabling power monitoring...");
+            powerMonitor.enable(true);
+        }
+        else if (command == "power-off")
+        {
+            Serial.println("[CMD] Disabling power monitoring...");
+            powerMonitor.enable(false);
+        }
+        else if (command == "power-report")
+        {
+            powerMonitor.printReport();
+        }
+        else if (command == "power-detailed")
+        {
+            powerMonitor.printDetailedReport();
+        }
+        else if (command == "power-reset")
+        {
+            Serial.println("[CMD] Resetting power monitor...");
+            powerMonitor.reset();
+        }
         else if (command == "help")
         {
             Serial.println("[CMD] Available commands:");
@@ -1864,6 +1910,11 @@ void handleSerialCommands()
             Serial.println("  fota-reset - Reset FOTA update state");
             Serial.println("  fota-assemble - Manually trigger firmware assembly");
             Serial.println("  fota-files - List FOTA files on filesystem");
+            Serial.println("  power-on - Enable power monitoring");
+            Serial.println("  power-off - Disable power monitoring");
+            Serial.println("  power-report - Show power consumption report");
+            Serial.println("  power-detailed - Show detailed power report");
+            Serial.println("  power-reset - Reset power monitor statistics");
             Serial.println("  help    - Show this help");
         }
         else if (command.length() > 0)
