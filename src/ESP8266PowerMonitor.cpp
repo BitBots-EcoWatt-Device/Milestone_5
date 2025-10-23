@@ -8,11 +8,14 @@ ESP8266PowerMonitor::ESP8266PowerMonitor()
       wifiTxTimeMs_(0),
       totalTimeMs_(0),
       sessionStartMs_(0),
+      time80MhzMs_(0),
+      time160MhzMs_(0),
       currentOperation_(nullptr),
       operationStartMs_(0),
       pollCount_(0),
       uploadCount_(0),
       configRequestCount_(0),
+      clockScalingCount_(0),
       enabled_(false)
 {
 }
@@ -86,6 +89,23 @@ void ESP8266PowerMonitor::recordWiFiActivity(unsigned long durationMs)
     wifiTxTimeMs_ += durationMs;
 }
 
+void ESP8266PowerMonitor::recordClockScaling(uint8_t frequencyMhz, unsigned long durationMs)
+{
+    if (!enabled_)
+        return;
+    
+    if (frequencyMhz == 80)
+    {
+        time80MhzMs_ += durationMs;
+    }
+    else if (frequencyMhz == 160)
+    {
+        time160MhzMs_ += durationMs;
+    }
+    
+    clockScalingCount_++;
+}
+
 void ESP8266PowerMonitor::updateTotalTime()
 {
     if (sessionStartMs_ > 0)
@@ -102,14 +122,33 @@ float ESP8266PowerMonitor::getAverageCurrent()
         return 0;
 
     // Calculate weighted average based on time spent in each state
-    float totalCharge = (activeTimeMs_ * CURRENT_ACTIVE_PROCESSING +
-                         sleepTimeMs_ * CURRENT_SLEEP +
-                         wifiTxTimeMs_ * CURRENT_WIFI_TX);
-
-    // Account for time not explicitly tracked (assume idle)
-    unsigned long trackedTime = activeTimeMs_ + sleepTimeMs_ + wifiTxTimeMs_;
-    unsigned long idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
-    totalCharge += (idleTime * CURRENT_ACTIVE_IDLE);
+    float totalCharge = 0;
+    
+    // If clock scaling is tracked, use differentiated current values
+    if (time80MhzMs_ > 0 || time160MhzMs_ > 0)
+    {
+        totalCharge = (time80MhzMs_ * CURRENT_ACTIVE_80MHZ +
+                      time160MhzMs_ * CURRENT_ACTIVE_160MHZ +
+                      sleepTimeMs_ * CURRENT_SLEEP +
+                      wifiTxTimeMs_ * CURRENT_WIFI_TX);
+        
+        // Account for time not explicitly tracked (assume idle at 80MHz)
+        unsigned long trackedTime = time80MhzMs_ + time160MhzMs_ + sleepTimeMs_ + wifiTxTimeMs_;
+        unsigned long idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
+        totalCharge += (idleTime * CURRENT_ACTIVE_IDLE);
+    }
+    else
+    {
+        // Legacy mode: no clock scaling tracking
+        totalCharge = (activeTimeMs_ * CURRENT_ACTIVE_PROCESSING +
+                      sleepTimeMs_ * CURRENT_SLEEP +
+                      wifiTxTimeMs_ * CURRENT_WIFI_TX);
+        
+        // Account for time not explicitly tracked (assume idle)
+        unsigned long trackedTime = activeTimeMs_ + sleepTimeMs_ + wifiTxTimeMs_;
+        unsigned long idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
+        totalCharge += (idleTime * CURRENT_ACTIVE_IDLE);
+    }
 
     return totalCharge / totalTimeMs_;
 }
@@ -175,8 +214,20 @@ void ESP8266PowerMonitor::printDetailedReport()
 
     updateTotalTime();
 
-    unsigned long trackedTime = activeTimeMs_ + sleepTimeMs_ + wifiTxTimeMs_;
-    unsigned long idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
+    bool clockScalingTracked = (time80MhzMs_ > 0 || time160MhzMs_ > 0);
+    unsigned long trackedTime;
+    unsigned long idleTime;
+    
+    if (clockScalingTracked)
+    {
+        trackedTime = time80MhzMs_ + time160MhzMs_ + sleepTimeMs_ + wifiTxTimeMs_;
+        idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
+    }
+    else
+    {
+        trackedTime = activeTimeMs_ + sleepTimeMs_ + wifiTxTimeMs_;
+        idleTime = (totalTimeMs_ > trackedTime) ? (totalTimeMs_ - trackedTime) : 0;
+    }
 
     Serial.println("\n========== DETAILED POWER REPORT ==========");
 
@@ -186,11 +237,30 @@ void ESP8266PowerMonitor::printDetailedReport()
     Serial.print(totalTimeMs_);
     Serial.println(" ms");
 
-    Serial.print("Active Processing: ");
-    Serial.print(activeTimeMs_);
-    Serial.print(" ms (");
-    Serial.print((activeTimeMs_ * 100.0) / totalTimeMs_, 1);
-    Serial.println("%)");
+    if (clockScalingTracked)
+    {
+        // Show clock-scaling aware breakdown
+        Serial.print("CPU @ 80MHz: ");
+        Serial.print(time80MhzMs_);
+        Serial.print(" ms (");
+        Serial.print((time80MhzMs_ * 100.0) / totalTimeMs_, 1);
+        Serial.println("%)");
+
+        Serial.print("CPU @ 160MHz: ");
+        Serial.print(time160MhzMs_);
+        Serial.print(" ms (");
+        Serial.print((time160MhzMs_ * 100.0) / totalTimeMs_, 1);
+        Serial.println("%)");
+    }
+    else
+    {
+        // Legacy mode
+        Serial.print("Active Processing: ");
+        Serial.print(activeTimeMs_);
+        Serial.print(" ms (");
+        Serial.print((activeTimeMs_ * 100.0) / totalTimeMs_, 1);
+        Serial.println("%)");
+    }
 
     Serial.print("Sleep Time: ");
     Serial.print(sleepTimeMs_);
@@ -218,6 +288,12 @@ void ESP8266PowerMonitor::printDetailedReport()
     Serial.println(uploadCount_);
     Serial.print("Config Requests: ");
     Serial.println(configRequestCount_);
+    
+    if (clockScalingTracked)
+    {
+        Serial.print("Clock Scaling Events: ");
+        Serial.println(clockScalingCount_);
+    }
 
     // Power calculations
     Serial.println("\n--- Power Consumption ---");
@@ -238,9 +314,23 @@ void ESP8266PowerMonitor::printDetailedReport()
 
     // Current breakdown by state
     Serial.println("\n--- Estimated Current by State ---");
-    Serial.print("Processing: ");
-    Serial.print(CURRENT_ACTIVE_PROCESSING, 1);
-    Serial.println(" mA");
+    
+    if (clockScalingTracked)
+    {
+        Serial.print("CPU @ 80MHz: ");
+        Serial.print(CURRENT_ACTIVE_80MHZ, 1);
+        Serial.println(" mA");
+
+        Serial.print("CPU @ 160MHz: ");
+        Serial.print(CURRENT_ACTIVE_160MHZ, 1);
+        Serial.println(" mA");
+    }
+    else
+    {
+        Serial.print("Processing: ");
+        Serial.print(CURRENT_ACTIVE_PROCESSING, 1);
+        Serial.println(" mA");
+    }
 
     Serial.print("Idle: ");
     Serial.print(CURRENT_ACTIVE_IDLE, 1);
@@ -253,6 +343,16 @@ void ESP8266PowerMonitor::printDetailedReport()
     Serial.print("WiFi TX: ");
     Serial.print(CURRENT_WIFI_TX, 1);
     Serial.println(" mA");
+    
+    if (clockScalingTracked)
+    {
+        float avgClockScaledCurrent = ((time80MhzMs_ * CURRENT_ACTIVE_80MHZ) + 
+                                       (time160MhzMs_ * CURRENT_ACTIVE_160MHZ)) / 
+                                       (time80MhzMs_ + time160MhzMs_);
+        Serial.print("Avg with Clock Scaling: ");
+        Serial.print(avgClockScaledCurrent, 1);
+        Serial.println(" mA");
+    }
 
     // Battery life estimates
     Serial.println("\n--- Battery Life Estimates ---");
@@ -281,9 +381,12 @@ void ESP8266PowerMonitor::reset()
     sleepTimeMs_ = 0;
     wifiTxTimeMs_ = 0;
     totalTimeMs_ = 0;
+    time80MhzMs_ = 0;
+    time160MhzMs_ = 0;
     pollCount_ = 0;
     uploadCount_ = 0;
     configRequestCount_ = 0;
+    clockScalingCount_ = 0;
     sessionStartMs_ = millis();
     currentOperation_ = nullptr;
     operationStartMs_ = 0;

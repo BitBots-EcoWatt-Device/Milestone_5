@@ -58,6 +58,7 @@ struct ESP8266Config
     BootStatusConfig boot_status;
     char firmware_version[16]; // Firmware version string (e.g., "1.0.0")
     uint32_t magic; // For EEPROM validation
+    uint32_t config_version; // Configuration version - increment when defaults change
 };
 
 class ConfigManager
@@ -99,6 +100,8 @@ private:
     static const int EEPROM_SIZE = sizeof(ESP8266Config);
 
     bool isConfigValid() const;
+    uint32_t calculateDefaultsHash() const; // Calculate hash of current defaults
+    void populateDefaults(ESP8266Config &cfg) const; // Helper to populate defaults
 };
 
 extern ConfigManager configManager;

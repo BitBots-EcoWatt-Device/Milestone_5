@@ -166,9 +166,14 @@ Savings:   ((78.45 - 28.30) / 78.45) × 100 = 63.9%
 | Technique | Current Reduction | Implementation Complexity |
 |-----------|------------------|--------------------------|
 | Light Sleep | 60-75% | Low |
-| Dynamic Clock Scaling | 10-15% | Medium |
+| Dynamic Clock Scaling | 5-10% additional | Medium |
 | Peripheral Gating (WiFi) | 30-40% | High |
 | Combined (Sleep + Clock) | 65-80% | Medium |
+
+**Note on Clock Scaling:** ESP8266 supports 80MHz and 160MHz. The strategy is:
+- Default: 80MHz (lower power consumption)
+- Burst: 160MHz for heavy processing (WiFi, JSON, compression)
+- Benefit: Tasks complete 2× faster at 160MHz, spending less total time in active mode
 
 ---
 

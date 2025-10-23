@@ -17,6 +17,7 @@ public:
     void endOperation();
     void recordSleep(unsigned long durationMs);
     void recordWiFiActivity(unsigned long durationMs);
+    void recordClockScaling(uint8_t frequencyMhz, unsigned long durationMs);
 
     // Reporting
     void printReport();
@@ -37,13 +38,19 @@ private:
     unsigned long totalTimeMs_;
     unsigned long sessionStartMs_;
     
+    // Clock scaling trackers
+    unsigned long time80MhzMs_;   // Time spent at 80 MHz
+    unsigned long time160MhzMs_;  // Time spent at 160 MHz
+    
     // Operation tracking
     const char* currentOperation_;
     unsigned long operationStartMs_;
     
     // Current consumption constants (mA) - typical ESP8266 values
-    static constexpr float CURRENT_ACTIVE_IDLE = 80.0;        // Active but idle
-    static constexpr float CURRENT_ACTIVE_PROCESSING = 90.0;  // CPU processing
+    static constexpr float CURRENT_ACTIVE_IDLE = 80.0;        // Active but idle (80 MHz)
+    static constexpr float CURRENT_ACTIVE_80MHZ = 80.0;       // CPU at 80 MHz
+    static constexpr float CURRENT_ACTIVE_160MHZ = 95.0;      // CPU at 160 MHz
+    static constexpr float CURRENT_ACTIVE_PROCESSING = 90.0;  // CPU processing (average)
     static constexpr float CURRENT_SLEEP = 15.0;              // Light sleep
     static constexpr float CURRENT_WIFI_TX = 170.0;           // WiFi transmitting
     static constexpr float CURRENT_WIFI_RX = 100.0;           // WiFi receiving
@@ -52,6 +59,7 @@ private:
     unsigned long pollCount_;
     unsigned long uploadCount_;
     unsigned long configRequestCount_;
+    unsigned long clockScalingCount_;  // Number of frequency changes
     
     bool enabled_;
     
