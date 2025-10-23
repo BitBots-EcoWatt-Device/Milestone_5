@@ -37,7 +37,16 @@ bool ConfigManager::loadConfig()
         Serial.print(", Current hash: 0x");
         Serial.println(current_defaults_hash, HEX);
         Serial.println("[CONFIG] Loading new defaults and updating EEPROM");
+        
+        // Preserve security settings (PSK, nonce) before reloading defaults
+        SecurityConfig preservedSecurity = config_.security;
+        
         loadDefaults();
+        
+        // Restore preserved security settings
+        config_.security = preservedSecurity;
+        Serial.println("[CONFIG] Security settings preserved (PSK, nonce)");
+        
         saveConfig(); // Save the new defaults
         return false;
     }
@@ -177,8 +186,10 @@ uint32_t ConfigManager::calculateDefaultsHash() const
     hashString(temp_config.api.config_url);
     hashValue(temp_config.api.timeout_ms);
     
-    // Security
-    hashString(temp_config.security.psk);
+    // Security - EXCLUDED from hash to preserve during updates
+    // PSK and nonce should NOT reset when other defaults change
+    // This prevents FOTA hash mismatches during config updates
+    // hashString(temp_config.security.psk);  // COMMENTED OUT
     
     // Firmware version
     hashString(temp_config.firmware_version);
