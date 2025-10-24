@@ -107,10 +107,6 @@ static uint32_t crc32_calc(const uint8_t *data, size_t len)
 volatile bool pollPending = false;
 volatile bool uploadPending = false;
 volatile bool configRequestPending = false;
-volatile bool finalAckPending = false;
-
-// Track outcome of the last config request performed by requestConfigUpdate()
-bool configRequestLastSuccessful = false;
 
 // Dynamic config polling interval tracking
 unsigned long currentConfigPollingInterval = 5000;
@@ -249,27 +245,6 @@ void loop()
     {
         configRequestPending = false;
         requestConfigUpdate();
-
-        // If FOTA requested a final ACK and the last config request succeeded,
-        // finalize the streaming update and reboot from main loop.
-        if (configRequestLastSuccessful && finalAckPending && fota.isComplete())
-        {
-            Serial.println("[FOTA] Final ACK was sent — attempting to finalize firmware install...");
-
-            if (fota.finalizeStreamingUpdate())
-            {
-                Serial.println("[FOTA] Firmware validated. Rebooting to apply update...");
-                finalAckPending = false;
-                configManager.setOTARebootFlag(true);
-                delay(1000);
-                ESP.restart();
-            }
-            else
-            {
-                Serial.println("[FOTA] Error: finalizeStreamingUpdate() failed after ACK; will retry on next successful config request");
-                // keep finalAckPending true so we retry on the next successful config request
-            }
-        }
     }
 
     // Update config polling rate based on FOTA status
@@ -714,9 +689,6 @@ void requestConfigUpdate()
 
         // Continue loop to send another immediate request
     } while (true);
-
-    // Record whether the last config request attempt succeeded so loop() can act on it
-    configRequestLastSuccessful = lastResult;
 
     powerMonitor.endOperation();
     configRequestInProgress = false;
