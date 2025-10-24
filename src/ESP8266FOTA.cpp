@@ -5,6 +5,8 @@
 
 // FOTA can trigger an immediate config request
 extern volatile bool configRequestPending;
+// Signal that final ACK should be sent by main loop
+extern volatile bool finalAckPending;
 
 ESP8266FOTA::ESP8266FOTA()
 {
@@ -407,7 +409,15 @@ bool ESP8266FOTA::processChunk(const JsonObject &fota)
     // Check if all chunks received
     if (isComplete())
     {
-        Serial.println("[FOTA] All chunks received! Finalizing firmware...");
+        Serial.println("[FOTA] All chunks received!");
+
+        // Request the main loop to send the final ACK via the normal config request path.
+        // Avoid performing HTTP or reboot directly inside FOTA processing.
+        finalAckPending = true;
+        configRequestPending = true;
+
+        Serial.println("[FOTA] Final ACK requested via configRequestPending; will finalize after successful ACK.");
+        // Do not finalize/reboot here — main loop will finalize after the server has received the ACK.
 
         if (finalizeStreamingUpdate())
         {
