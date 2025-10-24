@@ -144,7 +144,7 @@ void setup()
     Serial.println(__TIME__);
     Serial.print("[BUILD] ChipID: ");
     Serial.println(ESP.getChipId());
-    
+
     // ============================================================
     // POWER OPTIMIZATION 1: CPU Clock Scaling
     // ============================================================
@@ -159,7 +159,7 @@ void setup()
     system_update_cpu_freq(80);
     Serial.println("[POWER] CPU Clock: 80MHz (power-saving mode)");
     Serial.println("[POWER] Will boost to 160MHz during heavy processing");
-    
+
     // ============================================================
     // POWER OPTIMIZATION 2: Enable Light Sleep Mode
     // ============================================================
@@ -261,7 +261,7 @@ void loop()
     // ============================================================
     // Record sleep time for power monitoring
     powerMonitor.recordSleep(100);
-    
+
     // Use delay() which automatically enters light sleep mode
     // when WIFI_LIGHT_SLEEP is enabled. The ESP8266 will:
     // - Drop CPU to minimal power (~15mA)
@@ -270,7 +270,7 @@ void loop()
     // - Wake up on WiFi events
     // This is much more efficient than busy-waiting
     delay(100);
-    
+
     // Optional: Yield to allow background WiFi tasks
     // This helps maintain stable WiFi connection
     yield();
@@ -298,10 +298,10 @@ bool initializeSystem()
     int wifi_timeout = 0;
     while (WiFi.status() != WL_CONNECTED && wifi_timeout < 30)
     {
-        delay(1000);  // Light sleep active during WiFi connection
+        delay(1000); // Light sleep active during WiFi connection
         Serial.print(".");
         wifi_timeout++;
-        yield();  // Allow WiFi stack to process
+        yield(); // Allow WiFi stack to process
     }
     Serial.println();
 
@@ -319,10 +319,10 @@ bool initializeSystem()
         int sync_timeout = 0;
         while (now < 8 * 3600 * 2 && sync_timeout < 10)
         {
-            delay(1000);  // Light sleep during time sync
+            delay(1000); // Light sleep during time sync
             now = time(nullptr);
             sync_timeout++;
-            yield();  // Allow background processing
+            yield(); // Allow background processing
         }
 
         if (now >= 8 * 3600 * 2)
@@ -398,21 +398,21 @@ void updateConfigPollingRate()
     {
         Serial.println("[FOTA] FOTA update started - triggering immediate config request");
         configRequestPending = true;
-        fota.clearJustStartedFlag();  // Clear the flag after triggering immediate request
+        fota.clearJustStartedFlag(); // Clear the flag after triggering immediate request
     }
-    
+
     // Get the recommended polling interval from FOTA
     unsigned long recommendedInterval = fota.getRecommendedPollingInterval();
-    
+
     // Only update if the interval has changed to avoid unnecessary timer resets
     if (recommendedInterval != currentConfigPollingInterval)
     {
         currentConfigPollingInterval = recommendedInterval;
-        
+
         // Update the configuration request timer
         configRequestTicker.detach();
         configRequestTicker.attach_ms(currentConfigPollingInterval, onConfigRequestTimer);
-        
+
         if (fota.needsFastPolling())
         {
             Serial.print("[FOTA] Switching to fast polling: ");
@@ -449,7 +449,7 @@ void pollSensors()
     for (ParameterType paramType : enabledParams)
     {
         float value;
-        
+
         // Allow background tasks (WiFi, etc.) to process between sensor reads
         yield();
 
@@ -536,7 +536,7 @@ void pollSensors()
     // Record time spent at 80MHz for this operation
     unsigned long duration = millis() - opStart;
     powerMonitor.recordClockScaling(80, duration);
-    
+
     powerMonitor.endOperation();
 }
 
@@ -619,14 +619,14 @@ void uploadData()
 
     powerMonitor.endOperation();
     uploadInProgress = false;
-    
+
     // ============================================================
     // POWER OPTIMIZATION: Return to power-saving mode
     // ============================================================
     // Record time spent at 160MHz for this operation
     unsigned long duration = millis() - opStart;
     powerMonitor.recordClockScaling(160, duration);
-    
+
     system_update_cpu_freq(80);
     Serial.println("[POWER] CPU returned to 80MHz (power-saving mode)");
 }
@@ -657,25 +657,49 @@ void requestConfigUpdate()
     powerMonitor.startOperation("config");
     Serial.println("[CONFIG] Requesting configuration update from cloud...");
 
-    if (sendConfigRequest())
+    // Attempt one or more immediate requests while FOTA expects chunks
+    const int maxImmediateFollowUps = 8; // avoid starving WiFi / creating tight loop
+    int followUpCount = 0;
+
+    bool lastResult = false;
+    do
     {
-        Serial.println("[CONFIG] Configuration request successful");
-    }
-    else
-    {
-        Serial.println("[CONFIG] Configuration request failed");
-    }
+        lastResult = sendConfigRequest();
+        if (lastResult)
+            Serial.println("[CONFIG] Configuration request successful");
+        else
+            Serial.println("[CONFIG] Configuration request failed");
+
+        // If FOTA is active and not finished, request again immediately (server will then send next chunk)
+        if (fota.isComplete())
+            break;
+
+        // Use recommended polling interval as heuristic for "fast FOTA mode"
+        unsigned long rec = fota.getRecommendedPollingInterval();
+        if (rec > 1000) // not in fast FOTA mode → stop immediate follow-ups
+            break;
+
+        followUpCount++;
+        if (followUpCount >= maxImmediateFollowUps)
+            break;
+
+        // Give the WiFi stack a little time between immediate requests
+        delay(20);
+        yield();
+
+        // Continue loop to send another immediate request
+    } while (true);
 
     powerMonitor.endOperation();
     configRequestInProgress = false;
-    
+
     // ============================================================
     // POWER OPTIMIZATION: Return to power-saving mode
     // ============================================================
     // Record time spent at 160MHz for this operation
     unsigned long duration = millis() - opStart;
     powerMonitor.recordClockScaling(160, duration);
-    
+
     system_update_cpu_freq(80);
     Serial.println("[POWER] CPU returned to 80MHz (power-saving mode)");
 }
@@ -722,7 +746,7 @@ bool sendConfigRequest()
         {
             bootData["error_message"] = "";
         }
-        
+
         Serial.println("[CONFIG] Adding boot status to config request");
     }
 
@@ -1043,21 +1067,20 @@ bool sendConfigRequest()
                         httpClient.end();
                         return true;
                     }
-                    
-                    
+
                     // Process the entire response through FOTA (handles secure wrapper if needed)
                     String responseStr = response;
                     if (fota.processSecureFOTAResponse(responseStr))
                     {
                         Serial.println("[CONFIG] FOTA processing completed successfully");
-                        
+
                         // Mark boot status as reported if we successfully sent it
                         if (configManager.needsBootStatusReport())
                         {
                             configManager.markBootSuccessReported();
                             Serial.println("[CONFIG] Boot status reported successfully");
                         }
-                        
+
                         httpClient.end();
                         return true;
                     }
@@ -1065,14 +1088,14 @@ bool sendConfigRequest()
                     {
                         // No configuration update, command, or FOTA available
                         Serial.println("[CONFIG] No configuration update, command, or FOTA available");
-                        
+
                         // Mark boot status as reported if we successfully sent it
                         if (configManager.needsBootStatusReport())
                         {
                             configManager.markBootSuccessReported();
                             Serial.println("[CONFIG] Boot status reported successfully");
                         }
-                        
+
                         httpClient.end();
                         return true;
                     }
@@ -1097,8 +1120,8 @@ bool sendConfigRequest()
         if (attempt < maxAttempts - 1)
         {
             Serial.println("[CONFIG] Retrying configuration request...");
-            delay(2000);  // Light sleep during retry delay
-            yield();  // Allow WiFi and background processing
+            delay(2000); // Light sleep during retry delay
+            yield();     // Allow WiFi and background processing
         }
     }
 
@@ -1436,8 +1459,8 @@ bool uploadToServer(const std::vector<Sample> &samples)
                 Serial.print(" in ");
                 Serial.print(backoffMs);
                 Serial.println(" ms");
-                delay(backoffMs);  // Light sleep during retry backoff
-                yield();  // Allow WiFi processing
+                delay(backoffMs); // Light sleep during retry backoff
+                yield();          // Allow WiFi processing
             }
         }
         return false;
@@ -1881,7 +1904,7 @@ void handleSerialCommands()
             // Parse command: "version <new_version>"
             String newVersion = command.substring(8);
             newVersion.trim();
-            
+
             if (newVersion.length() > 0 && newVersion.length() < 16)
             {
                 configManager.setFirmwareVersion(newVersion.c_str());
@@ -1931,12 +1954,12 @@ void handleSerialCommands()
             Dir dir = LittleFS.openDir("/");
             int chunkCount = 0;
             bool hasFirmware = false;
-            
+
             while (dir.next())
             {
                 String fileName = dir.fileName();
                 size_t fileSize = dir.fileSize();
-                
+
                 if (fileName.startsWith("/fota_"))
                 {
                     Serial.print("  ");
@@ -1944,7 +1967,7 @@ void handleSerialCommands()
                     Serial.print(" (");
                     Serial.print(fileSize);
                     Serial.println(" bytes)");
-                    
+
                     if (fileName.startsWith("/fota_chunk_"))
                     {
                         chunkCount++;
@@ -1955,11 +1978,11 @@ void handleSerialCommands()
                     }
                 }
             }
-            
+
             Serial.print("[CMD] Found ");
             Serial.print(chunkCount);
             Serial.println(" chunk files");
-            
+
             if (hasFirmware)
             {
                 Serial.println("[CMD] Assembled firmware file exists");
