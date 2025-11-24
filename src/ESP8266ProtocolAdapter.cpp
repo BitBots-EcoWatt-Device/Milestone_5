@@ -1,4 +1,5 @@
 #include "ESP8266ProtocolAdapter.h"
+#include "ESP8266ErrorLogger.h"
 
 ESP8266ProtocolAdapter::ESP8266ProtocolAdapter() : lastConnectionCheck_(0)
 {
@@ -117,6 +118,7 @@ bool ESP8266ProtocolAdapter::postJSON(const String &url, const String &frameHex,
             {
                 Serial.print("[HTTP] JSON parsing failed: ");
                 Serial.println(error.c_str());
+                errorLogger.logCorruptResponse("JSON parsing failed: " + String(error.c_str()));
                 httpClient_.end();
                 return false;
             }
@@ -130,6 +132,7 @@ bool ESP8266ProtocolAdapter::postJSON(const String &url, const String &frameHex,
             else
             {
                 Serial.println("[HTTP] Response missing 'frame' field");
+                errorLogger.logCorruptResponse("HTTP response missing 'frame' field");
             }
         }
     }
@@ -137,6 +140,13 @@ bool ESP8266ProtocolAdapter::postJSON(const String &url, const String &frameHex,
     {
         Serial.print("[HTTP] Error: ");
         Serial.println(httpClient_.errorToString(httpResponseCode));
+        
+        // Check if it's a timeout error (code -1 or -11 typically indicates timeout)
+        if (httpResponseCode == -1 || httpResponseCode == HTTPC_ERROR_READ_TIMEOUT) {
+            errorLogger.logTimeout("HTTP POST request");
+        } else {
+            errorLogger.logPacketDrop("HTTP error: " + httpClient_.errorToString(httpResponseCode));
+        }
     }
 
     httpClient_.end();

@@ -18,6 +18,7 @@
 #include "ESP8266Security.h"
 #include "ESP8266FOTA.h"
 #include "ESP8266PowerMonitor.h"
+#include "ESP8266ErrorLogger.h"
 #include <LittleFS.h>
 
 // Global objects
@@ -279,6 +280,12 @@ void loop()
 bool initializeSystem()
 {
     Serial.println("[INIT] Starting system initialization...");
+
+    // Initialize error logger
+    if (!errorLogger.begin())
+    {
+        Serial.println("[INIT] Warning: Error logger initialization failed");
+    }
 
     // Initialize configuration manager
     if (!configManager.begin())
@@ -2011,6 +2018,21 @@ void handleSerialCommands()
             Serial.println("[CMD] Resetting power monitor...");
             powerMonitor.reset();
         }
+        else if (command == "error-log")
+        {
+            Serial.println("[CMD] Displaying error log...");
+            errorLogger.printLog();
+        }
+        else if (command == "error-stats")
+        {
+            Serial.println("[CMD] Displaying error statistics...");
+            errorLogger.printStats();
+        }
+        else if (command == "error-clear")
+        {
+            Serial.println("[CMD] Clearing error log...");
+            errorLogger.clearOldLogs();
+        }
         else if (command == "help")
         {
             Serial.println("[CMD] Available commands:");
@@ -2034,6 +2056,9 @@ void handleSerialCommands()
             Serial.println("  power-report - Show power consumption report");
             Serial.println("  power-detailed - Show detailed power report");
             Serial.println("  power-reset - Reset power monitor statistics");
+            Serial.println("  error-log - Display complete error log");
+            Serial.println("  error-stats - Display error statistics");
+            Serial.println("  error-clear - Clear error log file");
             Serial.println("  help    - Show this help");
         }
         else if (command.length() > 0)
