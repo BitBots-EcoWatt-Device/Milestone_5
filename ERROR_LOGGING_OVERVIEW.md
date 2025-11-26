@@ -97,11 +97,3 @@ Simultaneously, the persistent log receives the formatted entry, and counters in
 | Counters not moving | Logger not initialized | Check `initializeSystem()` call order |
 | `error-log` empty | Cleared recently or file trimmed | Re-run fault injection |
 | Cannot open log | LittleFS corruption | `pio run --target uploadfs` |
-
-## 10. Benefits Recap
-- Full traceability of simulator-driven faults for lab reports and QA.
-- Faster root-cause analysis thanks to categorized, timestamped history.
-- Automatic log hygiene and negligible performance overhead.
-- Drop-in Serial commands usable by QA, firmware, and support teams alike.
-
-Keep this document alongside the simulator instructions so every test run captures consistent, auditable error data.

@@ -93,10 +93,71 @@ Because the same assumptions are used for every firmware build, any change in th
 - Light Sleep and scheduler tweaks delivered a measurable improvement, nearly tripling documented sleep time and yielding a 10% current reduction.
 - The savings are below the 60–75% target because the device still spends ~80% of its time actively polling every 5 seconds. More aggressive tactics—forced WiFi sleep between polls, longer intervals, and the now-implemented dynamic clock scaling—are expected to drive average current toward the 30–40 mA range once re-measured.
 
-### 3.4 Next Measurement Targets
-1. **Re-run `power-detailed` with the combined Light Sleep + Dynamic Clock Scaling build** to capture the additional 5–10% savings predicted by energy-per-upload math.
-2. **Experiment with forced WiFi sleep windows** or longer poll intervals to push sleep time above 80%.
-3. **Maintain the same measurement protocol** so future comparisons stay directly relatable to the baseline figures above.
+### 3.4 Dynamic Clock Scaling Results (November 26, 2025)
+
+After implementing dynamic CPU clock scaling (80 MHz baseline with 160 MHz bursts during heavy processing), a 10-minute test session showed further improvements:
+
+#### Detailed Measurements
+```
+========== DETAILED POWER REPORT ==========
+--- Time Breakdown ---
+Total Session Time: 601200 ms (10.02 minutes)
+CPU @ 80MHz: 450715 ms (75.0%)
+CPU @ 160MHz: 34598 ms (5.8%)
+Sleep Time: 113700 ms (18.9%)
+WiFi Activity: 14907 ms (2.5%)
+Idle (untracked): 0 ms (0.0%)
+
+--- Operation Counts ---
+Sensor Polls: 119
+Data Uploads: 40
+Config Requests: 111
+Clock Scaling Events: 270
+
+--- Power Consumption ---
+Average Current: 72.49 mA
+Average Power: 239.22 mW
+Energy Consumed: 12.1066 mAh
+
+--- Estimated Current by State ---
+CPU @ 80MHz: 80.0 mA
+CPU @ 160MHz: 95.0 mA
+Idle: 80.0 mA
+Sleep: 15.0 mA
+WiFi TX: 170.0 mA
+Avg with Clock Scaling: 81.1 mA
+
+--- Battery Life Estimates ---
+500mAh:  6.90 hours
+1000mAh: 13.80 hours
+2000mAh: 27.59 hours
+5000mAh: 68.98 hours
+===========================================
+```
+
+#### Comparison: Baseline → Light Sleep → Dynamic Clock Scaling
+| Metric | Baseline | Light Sleep Only | + Clock Scaling | Total Improvement |
+| --- | --- | --- | --- | --- |
+| Average Current | 85.87 mA | 76.93 mA | **72.49 mA** | **−15.6%** |
+| Average Power | 283.38 mW | 253.87 mW | **239.22 mW** | **−15.6%** |
+| Sleep Time | 6.6% | 18.9% | **18.9%** | +12.3% |
+| CPU @ 80MHz | — | — | **75.0%** | — |
+| CPU @ 160MHz | — | — | **5.8%** | — |
+| Battery Life @1000mAh | 11.6 h | 13.0 h | **13.8 h** | **+19.0%** |
+
+#### Key Insights
+- **Clock scaling added 5.8% savings** on top of light sleep, bringing total current reduction to 15.6%
+- **270 clock scaling events** in 10 minutes (27/minute) with minimal overhead
+- **CPU spent only 5.8% at 160 MHz**, achieving burst performance where needed while staying efficient
+- **Battery life improved from 11.6h to 13.8h** (19% increase) with combined optimizations
+- **Energy per operation reduced** by completing WiFi/JSON/compression tasks faster at higher frequency
+
+The dynamic clock scaling strategy successfully demonstrates the "burst and return" philosophy—brief periods of higher power consumption during intensive tasks result in lower overall energy usage by reducing total active time.
+
+### 3.5 Next Measurement Targets
+1. **Experiment with forced WiFi sleep windows** or longer poll intervals to push sleep time above 80%.
+2. **Maintain the same measurement protocol** so future comparisons stay directly relatable to the baseline figures above.
+3. **Consider modem sleep** during longer idle periods for additional savings.
 
 ---
 

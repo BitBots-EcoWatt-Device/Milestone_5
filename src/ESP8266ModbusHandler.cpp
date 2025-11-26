@@ -67,16 +67,7 @@ bool ESP8266ModbusHandler::readRegisters(uint16_t startAddr, uint16_t numRegs, s
         return false;
     }
 
-    // Check for exception
-    if (response[1] & 0x80)
-    {
-        Serial.print("[MODBUS] Exception: ");
-        Serial.println(modbusExceptionMessage(response[2]));
-        errorLogger.logModbusException(response[2], modbusExceptionMessage(response[2]));
-        return false;
-    }
-
-    // Verify CRC
+    // Verify CRC first (before checking exception) to properly identify CRC errors
     uint16_t receivedCRC = (response[response.size() - 1] << 8) | response[response.size() - 2];
     std::vector<uint8_t> dataForCRC(response.begin(), response.end() - 2);
     uint16_t calculatedCRC = calculateCRC(dataForCRC);
@@ -86,6 +77,15 @@ bool ESP8266ModbusHandler::readRegisters(uint16_t startAddr, uint16_t numRegs, s
         Serial.println("[MODBUS] CRC mismatch");
         errorLogger.logCRCError("Read operation - Expected: 0x" + String(calculatedCRC, HEX) + 
                                 ", Received: 0x" + String(receivedCRC, HEX));
+        return false;
+    }
+
+    // Check for exception (after CRC validation)
+    if (response[1] & 0x80)
+    {
+        Serial.print("[MODBUS] Exception: ");
+        Serial.println(modbusExceptionMessage(response[2]));
+        errorLogger.logModbusException(response[2], modbusExceptionMessage(response[2]));
         return false;
     }
 
@@ -131,16 +131,7 @@ bool ESP8266ModbusHandler::writeRegister(uint16_t regAddr, uint16_t regValue, ui
         return false;
     }
 
-    // Check for exception
-    if (response[1] & 0x80)
-    {
-        Serial.print("[MODBUS] Write exception: ");
-        Serial.println(modbusExceptionMessage(response[2]));
-        errorLogger.logModbusException(response[2], "Write - " + modbusExceptionMessage(response[2]));
-        return false;
-    }
-
-    // Verify CRC
+    // Verify CRC first (before checking exception) to properly identify CRC errors
     uint16_t receivedCRC = (response[response.size() - 1] << 8) | response[response.size() - 2];
     std::vector<uint8_t> dataForCRC(response.begin(), response.end() - 2);
     uint16_t calculatedCRC = calculateCRC(dataForCRC);
@@ -150,6 +141,15 @@ bool ESP8266ModbusHandler::writeRegister(uint16_t regAddr, uint16_t regValue, ui
         Serial.println("[MODBUS] Write CRC mismatch");
         errorLogger.logCRCError("Write operation - Expected: 0x" + String(calculatedCRC, HEX) + 
                                 ", Received: 0x" + String(receivedCRC, HEX));
+        return false;
+    }
+
+    // Check for exception (after CRC validation)
+    if (response[1] & 0x80)
+    {
+        Serial.print("[MODBUS] Write exception: ");
+        Serial.println(modbusExceptionMessage(response[2]));
+        errorLogger.logModbusException(response[2], "Write - " + modbusExceptionMessage(response[2]));
         return false;
     }
 

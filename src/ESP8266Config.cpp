@@ -81,8 +81,8 @@ void ConfigManager::populateDefaults(ESP8266Config &cfg) const
     // ============================================
     // WiFi defaults
     // ============================================
-    strcpy(cfg.wifi.ssid, "PrimeAlphA");
-    strcpy(cfg.wifi.password, "AlphaDBR11");
+    strcpy(cfg.wifi.ssid, "Galaxy M12 AC20");
+    strcpy(cfg.wifi.password, "ABC12345");
     strcpy(cfg.wifi.hostname, "bitbots-ecoWatt");
 
     // ============================================
@@ -91,8 +91,8 @@ void ConfigManager::populateDefaults(ESP8266Config &cfg) const
     strcpy(cfg.api.api_key, "NjhhZWIwNDU1ZDdmMzg3MzNiMTQ5YTFjOjY4YWViMDQ1NWQ3ZjM4NzMzYjE0OWExMg==");
     strcpy(cfg.api.read_url, "http://20.15.114.131:8080/api/inverter/read");
     strcpy(cfg.api.write_url, "http://20.15.114.131:8080/api/inverter/write");
-    strcpy(cfg.api.upload_url, "http://172.23.27.124:5001/upload");
-    strcpy(cfg.api.config_url, "http://172.23.27.124:5001/config");
+    strcpy(cfg.api.upload_url, "http://10.253.245.170:5001/upload");
+    strcpy(cfg.api.config_url, "http://10.253.245.170:5001/config");
     cfg.api.timeout_ms = 5000;
 
     // ============================================
