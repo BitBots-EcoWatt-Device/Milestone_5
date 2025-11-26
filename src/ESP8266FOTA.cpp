@@ -3,6 +3,9 @@
 #include "ESP8266Security.h"
 #include <SHA256.h>
 
+// FOTA can trigger an immediate config request
+extern volatile bool configRequestPending;
+
 ESP8266FOTA::ESP8266FOTA()
 {
     reset();
@@ -38,14 +41,14 @@ float ESP8266FOTA::getProgress() const
 {
     if (!manifest_.valid || manifest_.total_chunks == 0)
         return 0.0f;
-    
+
     return (float)total_chunks_received_ / (float)manifest_.total_chunks * 100.0f;
 }
 
 bool ESP8266FOTA::isComplete() const
 {
-    return manifest_.valid && 
-           total_chunks_received_ == manifest_.total_chunks && 
+    return manifest_.valid &&
+           total_chunks_received_ == manifest_.total_chunks &&
            manifest_.total_chunks > 0;
 }
 
@@ -53,20 +56,12 @@ unsigned long ESP8266FOTA::getRecommendedPollingInterval() const
 {
     if (update_in_progress_ && !isComplete())
     {
-        // Use aggressive polling during FOTA updates
-        // Start with 500ms, increase slightly as we get more chunks to reduce server load
-        float progress = getProgress();
-        if (progress < 25.0f)
-            return 500;   // Very fast polling for initial chunks
-        else if (progress < 75.0f)
-            return 750;   // Moderate fast polling for middle chunks
-        else
-            return 1000;  // Still fast but slightly slower near completion
+        return 500; // Very fast polling for chunks
     }
     else
     {
         // Normal polling when no FOTA is active
-        return 5000;  // 5 seconds as before
+        return 5000;
     }
 }
 
@@ -80,14 +75,14 @@ bool ESP8266FOTA::processSecureFOTAResponse(const String &secureResponse)
     // Parse the secure wrapper
     StaticJsonDocument<2048> secureDoc;
     DeserializationError error = deserializeJson(secureDoc, secureResponse);
-    
+
     if (error)
     {
         Serial.print("[FOTA] Error parsing secure response: ");
         Serial.println(error.c_str());
         return false;
     }
-    
+
     // Check if this is a secure wrapper with nonce, payload, and mac
     if (!secureDoc.containsKey("nonce") || !secureDoc.containsKey("payload") || !secureDoc.containsKey("mac"))
     {
@@ -99,49 +94,49 @@ bool ESP8266FOTA::processSecureFOTAResponse(const String &secureResponse)
         Serial.println("[FOTA] No secure wrapper or FOTA data found");
         return false;
     }
-    
+
     // Extract secure wrapper components
     uint32_t nonce = secureDoc["nonce"];
     String encodedPayload = secureDoc["payload"];
     String receivedMac = secureDoc["mac"];
-    
+
     // Verify MAC first
     const char *psk = configManager.getSecurityConfig().psk;
     String calculatedMac = ESP8266Security::calculateHMAC(psk, nonce, encodedPayload);
-    
+
     if (calculatedMac != receivedMac)
     {
         Serial.println("[FOTA] Error: MAC verification failed for secure FOTA response");
         return false;
     }
-    
+
     // Decode base64 payload
     unsigned int decodedLength = ESP8266Security::getBase64DecodedLength(encodedPayload);
     unsigned char *decodedBuffer = new unsigned char[decodedLength + 1];
-    
+
     ESP8266Security::decodeBase64(encodedPayload, decodedBuffer);
     decodedBuffer[decodedLength] = '\0';
-    
+
     String decodedPayload = String((char *)decodedBuffer);
     delete[] decodedBuffer;
-    
+
     // Parse the decoded payload
     StaticJsonDocument<2048> payloadDoc;
     error = deserializeJson(payloadDoc, decodedPayload);
-    
+
     if (error)
     {
         Serial.print("[FOTA] Error parsing decoded payload: ");
         Serial.println(error.c_str());
         return false;
     }
-    
+
     // Process FOTA data if present
     if (payloadDoc.containsKey("fota"))
     {
         return processPlainFOTAResponse(payloadDoc["fota"]);
     }
-    
+
     // No FOTA data in this response
     return true;
 }
@@ -199,7 +194,7 @@ bool ESP8266FOTA::processManifest(const JsonObject &fota)
     }
 
     JsonObject manifest = fota["manifest"];
-    
+
     // Parse manifest fields
     String version = manifest["version"] | "";
     uint32_t size = manifest["size"] | 0;
@@ -215,7 +210,7 @@ bool ESP8266FOTA::processManifest(const JsonObject &fota)
     tempManifest.chunk_size = chunk_size;
     tempManifest.total_chunks = total_chunks;
     tempManifest.valid = true;
-    
+
     // Validate manifest
     if (!validateManifest(tempManifest))
     {
@@ -254,7 +249,7 @@ bool ESP8266FOTA::processManifest(const JsonObject &fota)
     manifest_ = tempManifest;
     manifest_received_ = true;
     update_in_progress_ = true;
-    update_just_started_ = true;  // Flag that update just started for immediate polling
+    update_just_started_ = true; // Flag that update just started for immediate polling
     last_chunk_received_ = 0;
     chunk_verified_ = true;
     total_chunks_received_ = 0;
@@ -406,6 +401,9 @@ bool ESP8266FOTA::processChunk(const JsonObject &fota)
     Serial.print(manifest_.total_chunks);
     Serial.println(" received)");
 
+    // Trigger immediate config request to fetch next chunk
+    configRequestPending = true;
+
     // Check if all chunks received
     if (isComplete())
     {
@@ -415,11 +413,11 @@ bool ESP8266FOTA::processChunk(const JsonObject &fota)
         {
             Serial.println("[FOTA] Firmware validation successful - Ready for installation!");
             Serial.println("[FOTA] Rebooting to apply new firmware...");
-            
+
             // Mark that we're about to reboot for OTA update
             configManager.setOTARebootFlag(true);
-            
-            delay(1000); // Give time for serial output
+
+            delay(1000);   // Give time for serial output
             ESP.restart(); // Apply new firmware
         }
         else
@@ -447,7 +445,8 @@ void ESP8266FOTA::markChunkReceived(uint16_t chunk_num)
 
 bool ESP8266FOTA::isChunkReceived(uint16_t chunk_num) const
 {
-    if (chunk_num >= 512) return false;
+    if (chunk_num >= 512)
+        return false;
     uint8_t byte_index = chunk_num / 32;
     uint8_t bit_index = chunk_num % 32;
     return (chunks_received_bitmap_[byte_index] & (1UL << bit_index)) != 0;
@@ -457,7 +456,7 @@ uint16_t ESP8266FOTA::getNextMissingChunk() const
 {
     if (!manifest_.valid || manifest_.total_chunks == 0)
         return 0;
-    
+
     // Find the first missing chunk (1-indexed)
     for (uint16_t chunk = 1; chunk <= manifest_.total_chunks; chunk++)
     {
@@ -466,7 +465,7 @@ uint16_t ESP8266FOTA::getNextMissingChunk() const
             return chunk;
         }
     }
-    
+
     return 0; // All chunks received
 }
 
@@ -478,28 +477,28 @@ void ESP8266FOTA::addStatusToConfigRequest(JsonObject &requestObj)
     Serial.print(manifest_ack_sent_ ? "true" : "false");
     Serial.print(", last_chunk_received_: ");
     Serial.println(last_chunk_received_);
-    
+
     // Add FOTA status if there's an ongoing update
     if (update_in_progress_)
     {
         if (manifest_received_ && !manifest_ack_sent_)
         {
-            // Step 1: Just received manifest, send ONLY acknowledgment 
+            // Step 1: Just received manifest, send ONLY acknowledgment
             // This tells server to change status from "manifest_sent" to "active"
             JsonObject fotaStatusObj = requestObj.createNestedObject("fota_status");
             fotaStatusObj["manifest_ack"] = true;
-            manifest_ack_sent_ = true;  // Mark that we've sent the ACK
+            manifest_ack_sent_ = true; // Mark that we've sent the ACK
             Serial.println("[FOTA] Sending manifest acknowledgment (server will change status to 'active')");
         }
         else if (total_chunks_received_ > 0)
         {
             // Step 2+: Normal chunk acknowledgment after server status is "active"
             JsonObject fotaStatusObj = requestObj.createNestedObject("fota_status");
-            
+
             // Correct format: chunk_received (0-indexed) and verified
             fotaStatusObj["chunk_received"] = last_chunk_received_;
             fotaStatusObj["verified"] = chunk_verified_;
-            
+
             Serial.print("[FOTA] Sending chunk_received: ");
             Serial.print(last_chunk_received_);
             Serial.print(", verified: ");
@@ -521,46 +520,46 @@ void ESP8266FOTA::addStatusToConfigRequest(JsonObject &requestObj)
 bool ESP8266FOTA::validateManifest(const FOTAManifest &manifest) const
 {
     // Check basic fields
-    if (manifest.version.isEmpty() || 
-        manifest.size == 0 || 
-        manifest.hash.isEmpty() || 
-        manifest.chunk_size == 0 || 
+    if (manifest.version.isEmpty() ||
+        manifest.size == 0 ||
+        manifest.hash.isEmpty() ||
+        manifest.chunk_size == 0 ||
         manifest.total_chunks == 0)
     {
         Serial.println("[FOTA] Error: Invalid manifest data - missing required fields");
         return false;
     }
-    
+
     // Check reasonable size limits (e.g., max 4MB firmware)
     if (manifest.size > 4 * 1024 * 1024)
     {
         Serial.println("[FOTA] Error: Firmware size too large");
         return false;
     }
-    
+
     // Check chunk size is reasonable (e.g., 512-4096 bytes)
     if (manifest.chunk_size < 512 || manifest.chunk_size > 4096)
     {
         Serial.println("[FOTA] Error: Invalid chunk size");
         return false;
     }
-    
+
     // Check total chunks limit (max 512 supported by bitmap)
     if (manifest.total_chunks > 512)
     {
         Serial.println("[FOTA] Error: Too many chunks (max 512 supported)");
         return false;
     }
-    
+
     // Verify size/chunk calculation
-    uint32_t expectedSize = (manifest.total_chunks - 1) * manifest.chunk_size + 
-                           (manifest.size % manifest.chunk_size == 0 ? manifest.chunk_size : manifest.size % manifest.chunk_size);
+    uint32_t expectedSize = (manifest.total_chunks - 1) * manifest.chunk_size +
+                            (manifest.size % manifest.chunk_size == 0 ? manifest.chunk_size : manifest.size % manifest.chunk_size);
     if (abs((int32_t)(expectedSize - manifest.size)) > (int32_t)manifest.chunk_size)
     {
         Serial.println("[FOTA] Error: Size/chunk calculation mismatch");
         return false;
     }
-    
+
     return true;
 }
 
@@ -572,14 +571,14 @@ bool ESP8266FOTA::validateChunk(uint16_t chunk_number, const String &data, const
         Serial.println("[FOTA] Error: Invalid chunk data - missing data or MAC");
         return false;
     }
-    
+
     // Check if chunk is within valid range
     if (chunk_number >= manifest_.total_chunks)
     {
         Serial.println("[FOTA] Error: Chunk number out of range");
         return false;
     }
-    
+
     return true;
 }
 
@@ -587,32 +586,32 @@ String ESP8266FOTA::calculateChunkHMAC(const char *psk, const String &base64Data
 {
     // Calculate HMAC exactly like the server:
     // hmac.new(device_psk.encode('utf-8'), chunk_data.encode('utf-8'), hashlib.sha256).hexdigest()
-    // 
+    //
     // This means: HMAC-SHA256(key=psk, message=base64Data) without any nonce prefix
-    
+
     SHA256 sha256;
-    
+
     // Reset HMAC with the PSK key
     sha256.resetHMAC(psk, strlen(psk));
-    
+
     // Update HMAC with the base64 chunk data directly (as UTF-8 bytes)
     sha256.update(base64Data.c_str(), base64Data.length());
-    
+
     // Finalize HMAC calculation
     uint8_t mac_result[SHA256::HASH_SIZE];
     sha256.finalizeHMAC(psk, strlen(psk), mac_result, sizeof(mac_result));
-    
+
     // Convert to hex string
     String mac_hex = "";
     mac_hex.reserve(sizeof(mac_result) * 2 + 1);
-    
+
     for (int i = 0; i < sizeof(mac_result); i++)
     {
         char hex_buf[3];
         sprintf(hex_buf, "%02x", mac_result[i]);
         mac_hex += hex_buf;
     }
-    
+
     return mac_hex;
 }
 
@@ -631,24 +630,24 @@ bool ESP8266FOTA::verifyChunkMAC(const String &data, const String &mac)
         Serial.println("[FOTA] Error: No PSK configured for MAC verification");
         return false;
     }
-    
+
     // Server calculates HMAC directly on base64 chunk data (as UTF-8 bytes)
     // Server: hmac.new(device_psk.encode('utf-8'), chunk_data.encode('utf-8'), hashlib.sha256).hexdigest()
     // We need to calculate HMAC directly on the base64 string without nonce prefix
     String calculatedMac = calculateChunkHMAC(psk, data);
-    
+
     Serial.print("[FOTA] Expected MAC: ");
     Serial.println(mac);
     Serial.print("[FOTA] Calculated MAC: ");
     Serial.println(calculatedMac);
-    
+
     bool macValid = calculatedMac.equalsIgnoreCase(mac);
     if (!macValid)
     {
         Serial.println("[FOTA] Error: MAC verification failed");
         return false;
     }
-    
+
     Serial.println("[FOTA] MAC verification successful");
     return true;
 }
@@ -681,7 +680,7 @@ void ESP8266FOTA::printDetailedStatus() const
     Serial.println(update_in_progress_ ? "Yes" : "No");
     Serial.print("  Manifest received: ");
     Serial.println(manifest_received_ ? "Yes" : "No");
-    
+
     if (manifest_.valid)
     {
         Serial.print("  Target version: ");
@@ -694,20 +693,20 @@ void ESP8266FOTA::printDetailedStatus() const
         Serial.print(total_chunks_received_);
         Serial.print("/");
         Serial.println(manifest_.total_chunks);
-        
+
         if (total_chunks_received_ > 0)
         {
             Serial.print("  Progress: ");
             Serial.print(getProgress(), 1);
             Serial.println("%");
         }
-        
+
         if (isComplete())
         {
             Serial.println("  Status: COMPLETE - Ready for installation");
         }
     }
-    
+
     Serial.print("  Last chunk received: ");
     Serial.println(last_chunk_received_);
     Serial.print("  Last chunk verified: ");
