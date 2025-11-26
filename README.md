@@ -128,11 +128,12 @@ After processing the configuration update, the device sends an acknowledgment:
 
 Configuration updates follow this sequence:
 
-1. Device sends periodic configuration request
+1. Device sends periodic configuration request (every 5 minutes by default)
 2. Cloud responds with configuration update (if any)
 3. Device validates and stores the new configuration in EEPROM
-4. Device sends acknowledgment back to cloud
+4. Configuration acknowledgment is prepared for next upload
 5. **Configuration changes take effect after the next successful data upload**
+6. Acknowledgment is sent to cloud with the upload
 
 This approach ensures:
 
@@ -140,6 +141,7 @@ This approach ensures:
 - Atomic configuration updates
 - Reliable rollback if upload fails
 - Clear state transitions
+- Acknowledgment delivery confirmation
 
 You can check for pending configuration updates using the `status` serial command.
 
@@ -206,10 +208,11 @@ Or in case of error:
 
 ### Command Execution Timing
 
-- Commands are received during configuration request cycles (every 5 minutes)
+- Commands are received during configuration request cycles (every 5 minutes by default)
 - Commands are executed immediately when received
-- Execution results are included in the next data upload
-- Results are cleared after successful upload
+- Execution results are prepared for next upload
+- Results are included in the next data upload payload
+- Results are cleared after successful upload with acknowledgment
 
 ### Manual Command Testing
 
@@ -225,14 +228,41 @@ This will queue a test command for immediate execution.
 
 Connect to the serial monitor at 115200 baud to use these commands:
 
+### Basic Commands
 - `status` - Show system status
 - `restart` - Restart the device
 - `test` - Run a test sensor poll
 - `upload` - Trigger immediate data upload
-- `config` - Request configuration update from cloud
-- `write <register> <value>` - Test write command execution
 - `wifi` - Show WiFi connection status
 - `help` - Show available commands
+
+### Configuration Commands
+- `config` - Request configuration update from cloud
+- `test-config` - Test configuration JSON parsing
+- `version` - Show current firmware version
+- `version <new_version>` - Set firmware version
+
+### Command Execution Testing
+- `write <register> <value>` - Test write command execution
+- `test-command` - Test command JSON parsing
+
+### FOTA Commands
+- `fota-status` - Show FOTA update status
+- `fota-reset` - Reset FOTA update state
+- `fota-assemble` - Manually trigger firmware assembly
+- `fota-files` - List FOTA files on filesystem
+
+### Power Monitoring Commands
+- `power-on` - Enable power monitoring
+- `power-off` - Disable power monitoring
+- `power-report` - Show power consumption report
+- `power-detailed` - Show detailed power report
+- `power-reset` - Reset power monitor statistics
+
+### Error Logging Commands
+- `error-log` - Display complete error log
+- `error-stats` - Display error statistics
+- `error-clear` - Clear error log file
 
 ## Monitoring
 
@@ -250,6 +280,32 @@ The device prints comprehensive status information including:
 - Data buffer usage
 - Polling and upload intervals
 - Sensor reading results
+- Pending configuration updates
+- Command execution status
+- FOTA update progress
+
+### Power Monitoring
+
+The firmware includes power monitoring features:
+
+- Track CPU clock frequency usage (80MHz vs 160MHz)
+- Monitor WiFi activity duration
+- Estimate average current consumption
+- Calculate battery life estimates
+- Light sleep mode tracking
+
+Use `power-report` and `power-detailed` commands for detailed power consumption data.
+
+### Error Logging
+
+Comprehensive error logging system:
+
+- Persistent error logs in LittleFS (`/error_log.txt`)
+- Error type classification (CRC, Modbus exception, timeout, etc.)
+- Error statistics counters
+- Timestamped error entries
+
+Use `error-log`, `error-stats`, and `error-clear` commands to manage error logs.
 
 ## Configuration Parameters
 
@@ -265,8 +321,9 @@ Default enabled parameters:
 
 ### Timing Configuration
 
-- **Poll Interval**: 5000ms (5 seconds)
+- **Poll Interval**: 5000ms (5 seconds) - configurable via cloud
 - **Upload Interval**: 30000ms (30 seconds)
+- **Config Request Interval**: 5000ms (5 seconds) - dynamic during FOTA
 - **Buffer Size**: 10 samples
 - **HTTP Timeout**: 5000ms
 
@@ -363,12 +420,21 @@ This approach provides:
 
 Enable detailed logging by monitoring the serial output. All operations are logged with prefixes:
 
+- `[BUILD]` - Build and chip identification
+- `[POWER]` - Power optimization status and CPU clock changes
+- `[INIT]` - System initialization
 - `[WiFi]` - WiFi connection status
 - `[HTTP]` - HTTP request/response details
 - `[POLL]` - Sensor polling results
 - `[BUFFER]` - Data buffer operations
 - `[UPLOAD]` - Data upload operations
-- `[CONFIG]` - Configuration loading/saving
+- `[CONFIG]` - Configuration loading/saving/updating
+- `[COMMAND]` - Command execution
+- `[FOTA]` - Firmware updates
+- `[BOOT]` - Boot status reporting
+- `[MODBUS]` - Modbus communication errors
+- `[WATCHDOG]` - System watchdog events
+- `[CMD]` - Serial command processing
 
 ## Building and Flashing
 
